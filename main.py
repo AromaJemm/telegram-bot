@@ -88,7 +88,7 @@ def start(message):
 
 def main_menu(message):
     markup = telebot.types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    buttons = ["Наш сайт 🌐", "Инструкции по использованию продуктов 📖", "Рецепты с ИИ 🤖", "Напишите нам ✉️"]
+    buttons = ["Наш сайт 🌐", "Инструкции по использованию продуктов 📖", "Напишите нам ✉️"]
     markup.add(*[telebot.types.KeyboardButton(btn) for btn in buttons])
     bot.send_message(message.chat.id, "🌿 Добро пожаловать! Выберите действие:", reply_markup=markup)
 
