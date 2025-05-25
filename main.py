@@ -67,7 +67,7 @@ def handle_buttons(message):
     try:
         if message.text == "Наш сайт 🌐":
             markup = telebot.types.InlineKeyboardMarkup()
-            markup.add(telebot.types.InlineKeyboardButton("Открыть сайт", url="https://jemmfashion.ru"))
+            markup.add(telebot.types.InlineKeyboardButton("Открыть сайт", url="https://scentori.ru"))
             bot.send_message(message.chat.id, "🌱 Наш сайт:", reply_markup=markup)
 
         elif message.text == "Инструкции 📖":
