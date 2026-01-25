@@ -2,307 +2,225 @@ import os
 import time
 import threading
 import sqlite3
+import requests
+import pandas as pd
 from datetime import datetime
 from telebot import TeleBot, types
 
-from products import PRODUCTS, CATEGORIES
+# ================== ENV ==================
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OPERATOR_CHAT_ID = int(os.getenv("OPERATOR_CHAT_ID"))
+ASSISTANT_LINK = os.getenv("ASSISTANT_LINK")
+INVENTORY_FILE_URL = os.getenv("INVENTORY_FILE_URL")
 
-# ======================================================
-# НАСТРОЙКИ (ТОЛЬКО ЧЕРЕЗ ENV)
-# ======================================================
+bot = TeleBot(BOT_TOKEN, threaded=True)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")                 # ← обязательно
-OPERATOR_CHAT_ID = os.getenv("OPERATOR_CHAT_ID")   # ← твой chat_id
-TIMEZONE = "Europe/Moscow"
+# ================== DB ==================
+conn = sqlite3.connect("shop.db", check_same_thread=False)
+cur = conn.cursor()
 
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN не задан")
+cur.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    username TEXT,
+    first_name TEXT,
+    created_at TEXT
+)
+""")
 
-bot = TeleBot(BOT_TOKEN, parse_mode="HTML")
+cur.execute("""
+CREATE TABLE IF NOT EXISTS orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    data TEXT,
+    status TEXT,
+    created_at TEXT
+)
+""")
 
-# ======================================================
-# БАЗА ДАННЫХ (SQLite)
-# ======================================================
+conn.commit()
 
-DB_PATH = "bot.db"
+# ================== INVENTORY ==================
+inventory_cache = {}
+inventory_last_update = None
 
-def db():
-    return sqlite3.connect(DB_PATH, check_same_thread=False)
+def load_inventory():
+    global inventory_cache, inventory_last_update
+    try:
+        df = pd.read_excel(INVENTORY_FILE_URL)
+        inventory_cache = {
+            row["product_id"]: {
+                "name": row["name"],
+                "quantity": int(row["quantity"]),
+                "active": int(row["active"])
+            }
+            for _, row in df.iterrows()
+        }
+        inventory_last_update = datetime.now()
+        print("Inventory updated")
+    except Exception as e:
+        print("Inventory load error:", e)
 
-def init_db():
-    with db() as conn:
-        c = conn.cursor()
-
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            first_seen TEXT
-        )
-        """)
-
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS cart (
-            user_id INTEGER,
-            product_id TEXT,
-            qty INTEGER,
-            PRIMARY KEY (user_id, product_id)
-        )
-        """)
-
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            data TEXT,
-            created_at TEXT
-        )
-        """)
-
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS stock (
-            product_id TEXT PRIMARY KEY,
-            qty INTEGER,
-            updated_at TEXT
-        )
-        """)
-
-        conn.commit()
-
-init_db()
-
-# ======================================================
-# СКЛАД (обновление 2 раза в сутки)
-# ======================================================
-
-STOCK_CACHE = {}
-
-def load_stock_from_file():
-    """
-    Здесь позже будет чтение Excel/CSV с Google Drive.
-    Пока заглушка.
-    """
-    # ← сюда вставь чтение файла остатков
-    # формат: {"lavender_10": 12, ...}
-    pass
-
-def stock_scheduler():
+def inventory_scheduler():
     while True:
-        now = datetime.now()
-        if now.hour in (6, 14):
-            try:
-                load_stock_from_file()
-            except Exception as e:
-                print("Ошибка обновления склада:", e)
-            time.sleep(3600)
-        time.sleep(300)
+        now = datetime.now().strftime("%H:%M")
+        if now in ("06:00", "14:00"):
+            load_inventory()
+            time.sleep(61)
+        time.sleep(20)
 
-threading.Thread(target=stock_scheduler, daemon=True).start()
+threading.Thread(target=inventory_scheduler, daemon=True).start()
+load_inventory()
 
-def get_stock(product_id):
-    return STOCK_CACHE.get(product_id, 0)
+# ================== STATE ==================
+user_state = {}
+user_cart = {}
 
-# ======================================================
-# ВСПОМОГАТЕЛЬНЫЕ
-# ======================================================
-
-def save_user(message):
-    with db() as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO users VALUES (?, ?, ?)",
-            (message.from_user.id,
-             message.from_user.username,
-             datetime.now().isoformat())
-        )
-
-def cart_count(user_id):
-    with db() as conn:
-        cur = conn.execute(
-            "SELECT SUM(qty) FROM cart WHERE user_id=?",
-            (user_id,)
-        )
-        return cur.fetchone()[0] or 0
-
-# ======================================================
-# МЕНЮ
-# ======================================================
-
-def main_menu(user_id):
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton(
-        "📚 Каталог и инструкции", callback_data="catalog"
-    ))
-    kb.add(types.InlineKeyboardButton(
-        f"🛒 Корзина ({cart_count(user_id)})", callback_data="cart"
-    ))
-    kb.add(types.InlineKeyboardButton(
-        "💬 Интерактивный помощник", url="https://t.me/ТУТ_ССЫЛКА"
-    ))
-    kb.add(types.InlineKeyboardButton(
-        "📣 Канал", url="https://t.me/ТУТ_КАНАЛ"
-    ))
-    kb.add(types.InlineKeyboardButton(
-        "🌐 Сайт", url="https://ТУТ_САЙТ"
-    ))
-    kb.add(types.InlineKeyboardButton(
-        "📞 Задать вопрос", callback_data="contact"
-    ))
-    return kb
-
-# ======================================================
-# СТАРТ
-# ======================================================
-
+# ================== START ==================
 @bot.message_handler(commands=["start"])
-def start(message):
-    save_user(message)
-    bot.send_message(
-        message.chat.id,
-        "Добро пожаловать в <b>Scentori</b> 🌿\n\n"
-        "Каталог ароматов, инструкции и удобный заказ.",
-        reply_markup=main_menu(message.from_user.id)
-    )
+def start(msg):
+    user_id = msg.from_user.id
+    cur.execute("INSERT OR IGNORE INTO users VALUES (?,?,?,?)",
+                (user_id, msg.from_user.username, msg.from_user.first_name, datetime.now().isoformat()))
+    conn.commit()
 
-# ======================================================
-# КАТАЛОГ
-# ======================================================
-
-@bot.callback_query_handler(func=lambda c: c.data == "catalog")
-def catalog(call):
-    kb = types.InlineKeyboardMarkup()
-    for cid, title in CATEGORIES.items():
-        kb.add(types.InlineKeyboardButton(title, callback_data=f"cat:{cid}"))
-    kb.add(types.InlineKeyboardButton("⬅️ Главное меню", callback_data="home"))
-    bot.edit_message_text(
-        "Выберите категорию:",
-        call.message.chat.id,
-        call.message.message_id,
-        reply_markup=kb
-    )
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("cat:"))
-def category(call):
-    cat = call.data.split(":")[1]
-    kb = types.InlineKeyboardMarkup()
-    for pid, p in PRODUCTS.items():
-        if p["category"] == cat:
-            kb.add(types.InlineKeyboardButton(p["name"], callback_data=f"product:{pid}"))
-    kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data="catalog"))
-    bot.edit_message_text(
-        "Выберите товар:",
-        call.message.chat.id,
-        call.message.message_id,
-        reply_markup=kb
-    )
-
-# ======================================================
-# КАРТОЧКА ТОВАРА
-# ======================================================
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("product:"))
-def product_card(call):
-    pid = call.data.split(":")[1]
-    p = PRODUCTS[pid]
-
-    text = (
-        f"<b>{p['name']}</b>\n"
-        f"{p['subtitle']}\n\n"
-        f"{p['intro']}\n\n"
-        f"<b>Свойства</b>\n{p['sections']['properties']}\n\n"
-        f"<b>Применение</b>\n{p['sections']['usage']}\n\n"
-        f"<b>Безопасность</b>\n{p['sections']['safety']}\n\n"
-        f"<b>Технические данные</b>\n{p['sections']['tech']}\n\n"
-        f"Цена: <s>{p['price']} ₽</s>\n"
-        f"<b>{p['bot_price']} ₽ через бот</b>"
-    )
+    user_cart[user_id] = {}
 
     kb = types.InlineKeyboardMarkup()
-
-    stock = get_stock(pid)
-
-    if stock > 0:
-        kb.add(types.InlineKeyboardButton(
-            "🛒 Добавить в корзину", callback_data=f"add:{pid}"
-        ))
-    elif p.get("allow_preorder"):
-        kb.add(types.InlineKeyboardButton(
-            "📦 Предзаказ", callback_data=f"preorder:{pid}"
-        ))
-
-    kb.add(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"cat:{p['category']}"))
-
-    with open(p["image"], "rb") as img:
-        bot.send_photo(
-            call.message.chat.id,
-            img,
-            caption=text,
-            reply_markup=kb
-        )
-
-# ======================================================
-# ДОБАВЛЕНИЕ В КОРЗИНУ
-# ======================================================
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("add:"))
-def add_to_cart(call):
-    pid = call.data.split(":")[1]
-    uid = call.from_user.id
-
-    stock = get_stock(pid)
-
-    with db() as conn:
-        cur = conn.execute(
-            "SELECT qty FROM cart WHERE user_id=? AND product_id=?",
-            (uid, pid)
-        )
-        current = cur.fetchone()
-        current_qty = current[0] if current else 0
-
-        if current_qty >= stock:
-            bot.answer_callback_query(call.id, "Больше добавить нельзя")
-            return
-
-        if current:
-            conn.execute(
-                "UPDATE cart SET qty=qty+1 WHERE user_id=? AND product_id=?",
-                (uid, pid)
-            )
-        else:
-            conn.execute(
-                "INSERT INTO cart VALUES (?, ?, 1)",
-                (uid, pid)
-            )
-
-    bot.answer_callback_query(call.id, "Добавлено в корзину")
-
-# ======================================================
-# КОНТАКТ
-# ======================================================
-
-@bot.callback_query_handler(func=lambda c: c.data == "contact")
-def contact(call):
-    bot.send_message(
-        call.message.chat.id,
-"Перевожу ваше сообщение оператору 😊\n"
-        "Специалист уже спешит к вам!"
+    kb.add(
+        types.InlineKeyboardButton("🛍 Каталог и инструкции", callback_data="catalog"),
+        types.InlineKeyboardButton("🛒 Корзина (0)", callback_data="cart")
+    )
+    kb.add(
+        types.InlineKeyboardButton("🤖 Интерактивный помощник", url=ASSISTANT_LINK),
+        types.InlineKeyboardButton("📞 Поддержка", callback_data="support")
     )
 
-# ======================================================
-# НАВИГАЦИЯ
-# ======================================================
-
-@bot.callback_query_handler(func=lambda c: c.data == "home")
-def home(call):
-    bot.edit_message_text(
-        "Главное меню:",
-        call.message.chat.id,
-        call.message.message_id,
-        reply_markup=main_menu(call.from_user.id)
+    bot.send_photo(
+        user_id,
+        photo=open("media/welcome.jpg", "rb"),
+        caption=(
+            "✨ Добро пожаловать в *Scentori!*\n\n"
+            "🛍 *Каталог* — масла, диффузоры и инструкции\n"
+            "🛒 *Корзина* — оформление заказа\n"
+            "🤖 *Интерактивный помощник* — поможет подобрать аромат под ваше настроение\n\n"
+            "Мы рядом 🌿"
+        ),
+        reply_markup=kb,
+        parse_mode="Markdown"
     )
 
-# ======================================================
-# ЗАПУСК
-# ======================================================
+# ================== CALLBACKS ==================
+@bot.callback_query_handler(func=lambda c: True)
+def callbacks(c):
+    uid = c.from_user.id
 
-print("Scentori bot started")
+    if c.data == "catalog":
+        show_catalog(uid)
+
+    elif c.data.startswith("product_"):
+        show_product(uid, c.data.split("_", 1)[1])
+
+    elif c.data.startswith("add_"):
+        add_to_cart(uid, c.data.split("_", 1)[1])
+
+    elif c.data == "cart":
+        show_cart(uid)
+
+    elif c.data == "order":
+        request_phone(uid)
+
+    elif c.data == "support":
+        bot.send_message(uid, "💬 Перевожу вас на оператора, он уже спешит к вам!")
+        bot.send_message(OPERATOR_CHAT_ID, f"Сообщение от @{c.from_user.username}")
+
+# ================== CATALOG ==================
+def show_catalog(uid):
+    kb = types.InlineKeyboardMarkup()
+    for pid, item in inventory_cache.items():
+        if item["active"] == 1:
+            kb.add(types.InlineKeyboardButton(item["name"], callback_data=f"product_{pid}"))
+    kb.add(types.InlineKeyboardButton("⬅ Назад", callback_data="start"))
+    bot.edit_message_text("🛍 *Каталог*", uid, bot.get_updates()[-1].message.message_id,
+                          reply_markup=kb, parse_mode="Markdown")
+
+# ================== PRODUCT ==================
+def show_product(uid, pid):
+    item = inventory_cache.get(pid)
+    if not item:
+        bot.send_message(uid, "Товар не найден")
+        return
+
+    text = f"*{item['name']}*\n\n"
+    if item["quantity"] > 0:
+        text += f"✅ В наличии: {item['quantity']} шт\n"
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("➕ Добавить в корзину", callback_data=f"add_{pid}"))
+    else:
+        text += "⏳ Сейчас нет в наличии\nДоступен *предзаказ*\n"
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("📞 Связаться с оператором", callback_data="support"))
+
+    kb.add(types.InlineKeyboardButton("⬅ Назад", callback_data="catalog"))
+
+    bot.send_photo(uid, open(f"media/{pid}.jpg", "rb"),
+                   caption=text,
+                   reply_markup=kb,
+                   parse_mode="Markdown")
+
+# ================== CART ==================
+def add_to_cart(uid, pid):
+    cart = user_cart.setdefault(uid, {})
+    available = inventory_cache[pid]["quantity"]
+
+    current = cart.get(pid, 0)
+    if current + 1 > available:
+        bot.answer_callback_query(bot.get_updates()[-1].callback_query.id,
+                                  "❌ Больше добавить нельзя — ограничение склада")
+        return
+
+    cart[pid] = current + 1
+    bot.answer_callback_query(bot.get_updates()[-1].callback_query.id,
+                              "✅ Добавлено в корзину")
+
+def show_cart(uid):
+    cart = user_cart.get(uid, {})
+    if not cart:
+        bot.send_message(uid, "🛒 Корзина пуста")
+        return
+
+    text = "🛒 *Ваша корзина:*\n\n"
+    total = 0
+    for pid, qty in cart.items():
+        name = inventory_cache[pid]["name"]
+        text += f"• {name} × {qty}\n"
+        total += qty
+
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton(f"✅ Оформить заказ ({total})", callback_data="order"))
+    kb.add(types.InlineKeyboardButton("⬅ Назад", callback_data="catalog"))
+
+    bot.send_message(uid, text, reply_markup=kb, parse_mode="Markdown")
+
+# ================== ORDER ==================
+def request_phone(uid):
+    user_state[uid] = "phone"
+    bot.send_message(uid, "📞 Введите номер телефона\nФормат: +7XXXXXXXXXX")
+
+@bot.message_handler(func=lambda m: user_state.get(m.from_user.id) == "phone")
+def receive_phone(msg):
+    if not msg.text.startswith("+7") or len(msg.text) != 12:
+        bot.send_message(msg.chat.id, "❌ Неверный формат. Попробуйте ещё раз")
+        return
+
+    user_state[msg.chat.id] = None
+    bot.send_message(msg.chat.id, "✅ Номер принят\n\nВыберите способ получения:")
+    kb = types.InlineKeyboardMarkup()
+    kb.add(
+        types.InlineKeyboardButton("📦 Доставка в ПВЗ Яндекс", callback_data="support"),
+        types.InlineKeyboardButton("🏬 Самовывоз (Москва)", callback_data="support")
+    )
+    bot.send_message(msg.chat.id, "👇", reply_markup=kb)
+
+# ================== RUN ==================
 bot.infinity_polling()
