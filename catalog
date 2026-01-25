@@ -1,0 +1,25 @@
+CATALOG = {  
+"essential_oils": {  
+"title": "Эфирные масла",  
+"items": [  
+"products.essential.lavender",  
+"products.essential.peppermint",  
+"products.essential.eucalyptus",  
+]  
+},  
+  
+"aroma_oils": {  
+"title": "Парфюмерные композиции",  
+"items": [  
+"products.aroma.biskay",  
+"products.aroma.balance",  
+]  
+},  
+  
+"other_goods": {  
+"title": "Другие товары",  
+"items": [  
+"products.other.diffuser",  
+]  
+}  
+}
