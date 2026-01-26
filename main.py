@@ -181,8 +181,21 @@ def update_warehouse():
     except Exception as e:
         logging.error(f"❌ Склад: {e}")
 
-# -------------------------- база --------------------------
-async def save_customer_action(user_id, action):
+# ====================== 🆕 НОВЫЕ ФУНКЦИИ (ПОСЛЕ handle_catalog) ======================
+
+async def init_db():  # ← 1. ВСТАВИТЬ ЗДЕСЬ
+    async with aiosqlite.connect("customers.db") as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS customers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                timestamp TEXT,
+                action TEXT
+            )
+        """)
+        await db.commit()
+
+async def save_customer_action(user_id, action):  # ← 2. ЗАМЕНИТЬ старую
     try:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         async with aiosqlite.connect("customers.db") as db:
@@ -193,7 +206,7 @@ async def save_customer_action(user_id, action):
             await db.commit()
         print(f"✅ {user_id} → {action}")
     except:
-       pass
+        pass
 
 # -------------------------- ОПЕРАТОР --------------------------
 async def send_operator_notification(context, user_id: int, request_type: str, details: str = ""):
@@ -485,7 +498,8 @@ def ping():
     return "🤖 Bot OK"
 
 # -------------------------- ЗАПУСК (✅ ФИКС 5) --------------------------
-def main():
+async def main():
+    await init_db()    
     # ✅ ФИКС 3: Сначала функции, потом scheduler
     scheduler = BackgroundScheduler()
     scheduler.add_job(update_warehouse, 'cron', hour='6,14')
@@ -502,6 +516,7 @@ def main():
     
     # Первое обновление склада
     update_warehouse()
+    await application.run_polling()
     
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
@@ -512,4 +527,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
