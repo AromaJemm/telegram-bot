@@ -228,7 +228,26 @@ scheduler.start()
 # --------------------------
 # Запуск бота
 # --------------------------
-if __name__ == "__main__":
+if name == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     register_handlers(app)
+
+    # --------------------------
+    # Фиктивный HTTP-сервер для Render (нужен только чтобы открыть порт)
+    # --------------------------
+    import threading
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+
+    def run_dummy_server():
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"OK")
+
+        server = HTTPServer(("0.0.0.0", 10000), Handler)
+        server.serve_forever()
+
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+
     app.run_polling()
