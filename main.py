@@ -452,18 +452,26 @@ async def handle_catalog(query, context, user_id):
         return
     
     # 4. ДОБАВИТЬ В КОРЗИНУ
-    if data.startswith("add:"):
-        module_path = data.split(":", 1)[1]
-        product = get_product_safe(module_path)
-        if add_to_cart(user_id, product['id']):
-            await query.answer("✅ Добавлено в корзину!")
-        else:
-            await query.answer("❌ Нет на складе!")
-        return
-    
-    # 5. ГЛАВНАЯ СТРАНИЦА КАТАЛОГА
-    save_customer_action(user_id, "catalog_view")
-    await query.edit_message_text("🛒 *Каталог:*", parse_mode="Markdown", reply_markup=catalog_menu())
+if data.startswith("add:"):
+    module_path = data.split(":", 1)[1]
+    product = get_product_safe(module_path)
+    if add_to_cart(user_id, product['id']):
+        await query.answer("✅ Добавлено в корзину!")
+    else:
+        await query.answer("❌ Нет на складе!")
+    return
+
+# 5. МЕНЮ "main" и "cart" 
+if data == "main":
+    await query.edit_message_text("🏠 *Главное меню:*", parse_mode="Markdown", reply_markup=main_menu())
+    return
+if data == "cart":
+    await query.edit_message_text("🛒 *Корзина:*", parse_mode="Markdown", reply_markup=cart_menu())
+    return
+
+# 6. ГЛАВНАЯ СТРАНИЦА КАТАЛОГА (по умолчанию)
+save_customer_action(user_id, "catalog_view")
+await query.edit_message_text("🛒 *Каталог:*", parse_mode="Markdown", reply_markup=catalog_menu())
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -537,6 +545,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
