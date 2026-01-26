@@ -508,8 +508,7 @@ async def main():
     
     # ✅ Handlers для команд и кнопок
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(handle_catalog, pattern="^(cat|product|prop|use|safety|tech|add):"))
-    application.add_handler(CallbackQueryHandler(handle_menu, pattern="^(main|cart)$"))
+    application.add_handler(CallbackQueryHandler(handle_catalog, pattern="^(cat|product|prop|use|safety|tech|add|main|cart):"))
     
     # ✅ ФИКС 3: Сначала функции, потом scheduler
     scheduler = BackgroundScheduler()
@@ -538,6 +537,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
