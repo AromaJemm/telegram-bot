@@ -501,6 +501,16 @@ def ping():
 # -------------------------- ЗАПУСК (✅ ФИКС 5) --------------------------
 async def main():
     await init_db()    
+        
+    # ====================== TELEGRAM BOT (НОВОЕ!) ======================
+    global application
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    
+    # ✅ Handlers для команд и кнопок
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(handle_catalog, pattern="^(cat|product|prop|use|safety|tech|add):"))
+    application.add_handler(CallbackQueryHandler(handle_menu, pattern="^(main|cart)$"))
+    
     # ✅ ФИКС 3: Сначала функции, потом scheduler
     scheduler = BackgroundScheduler()
     scheduler.add_job(update_warehouse, 'cron', hour='6,14')
@@ -528,6 +538,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
