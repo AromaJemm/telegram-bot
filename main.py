@@ -1,283 +1,234 @@
 import importlib
-import pandas as pd
-from io import BytesIO
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputFile
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-)
-from apscheduler.schedulers.background import BackgroundScheduler
-import re
 import os
-import requests
+import sqlite3
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from apscheduler.schedulers.background import BackgroundScheduler
+from html import escape as escape_md
 
-from catalog import CATALOG
-
-# ------------------------
+# --------------------------
 # ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
-# ------------------------
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-WAREHOUSE_FILE_LINK = os.environ.get("WAREHOUSE_FILE_LINK")
+# --------------------------
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+WAREHOUSE_FILE_LINK = os.environ["WAREHOUSE_FILE_LINK"]
+OPERATOR_ID = int(os.environ["OPERATOR_ID"])  # Telegram ID оператора
 
-# ------------------------
-# СКЛАД
-# ------------------------
-WAREHOUSE = {}
+# --------------------------
+# CATALOG
+# --------------------------
+CATALOG = {  
+    "essential_oils": {  
+        "title": "Эфирные масла",  
+        "items": [  
+            "products.essential.lavender",  
+            "products.essential.peppermint",  
+            "products.essential.eucalyptus",  
+        ]  
+    },  
+    "aroma_oils": {  
+        "title": "Парфюмерные композиции",  
+        "items": [  
+            "products.aroma.biskay",  
+            "products.aroma.balance",  
+        ]  
+    },  
+    "other_goods": {  
+        "title": "Другие товары",  
+        "items": [  
+            "products.other.diffuser",  
+        ]  
+    }  
+}
 
-def load_warehouse():
-    global WAREHOUSE
-    try:
-        resp = requests.get(WAREHOUSE_FILE_LINK)
-        resp.raise_for_status()
-        df = pd.read_excel(BytesIO(resp.content))
-    except Exception as e:
-        print(f"Ошибка загрузки склада: {e}")
-        return
+# --------------------------
+# SQLite база
+# --------------------------
+DB_FILE = "orders.db"
+conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+cursor = conn.cursor()
 
-    WAREHOUSE = {}
-    for _, row in df.iterrows():
-        product_id = str(row.get("product_id", "")).strip()
-        try:
-            quantity = int(row.get("quantity", 0))
-        except:
-            quantity = 0
-        try:
-            active = int(row.get("active", 0))
-        except:
-            active = 0
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS carts (
+    user_id INTEGER,
+    product_id TEXT,
+    quantity INTEGER,
+    PRIMARY KEY(user_id, product_id)
+)
+""")
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS orders (
+    order_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    product_id TEXT,
+    quantity INTEGER,
+    phone TEXT,
+    address TEXT,
+    delivery_method TEXT
+)
+""")
+conn.commit()
 
-        if product_id:
-            WAREHOUSE[product_id] = {"quantity": quantity, "active": active}
+# --------------------------
+# Функции для работы с продуктами
+# --------------------------
+def get_product(module_path: str):
+    module = importlib.import_module(module_path)
+    return module.PRODUCT
 
-    print("Склад обновлён")
+def get_fallback_photo(photo_path: str):
+    if not os.path.exists(photo_path):
+        return "images/fallback.jpg"
+    return photo_path
 
-def product_available(product_id: str) -> bool:
-    data = WAREHOUSE.get(product_id)
-    if not data:
-        return False
-    return data["active"] == 1 and data["quantity"] > 0
+# --------------------------
+# Функции для корзины
+# --------------------------
+def add_to_cart(user_id: int, product_id: str):
+    cursor.execute("SELECT quantity FROM carts WHERE user_id=? AND product_id=?", (user_id, product_id))
+    row = cursor.fetchone()
+    if row:
+        cursor.execute("UPDATE carts SET quantity=? WHERE user_id=? AND product_id=?", (row[0]+1, user_id, product_id))
+    else:
+        cursor.execute("INSERT INTO carts (user_id, product_id, quantity) VALUES (?, ?, ?)", (user_id, product_id, 1))
+    conn.commit()
 
-# ------------------------
-# КАТАЛОГ
-# ------------------------
-PRODUCT_CACHE = {}
+def remove_from_cart(user_id: int, product_id: str):
+    cursor.execute("DELETE FROM carts WHERE user_id=? AND product_id=?", (user_id, product_id))
+    conn.commit()
 
-def get_product(module_path):
-    if module_path in PRODUCT_CACHE:
-        return PRODUCT_CACHE[module_path]
-    try:
-        module = importlib.import_module(module_path)
-        product = module.PRODUCT
-        PRODUCT_CACHE[module_path] = product
-        return product
-    except Exception as e:
-        print(f"Ошибка импорта {module_path}: {e}")
-        return None
+def get_cart(user_id: int):
+    cursor.execute("SELECT product_id, quantity FROM carts WHERE user_id=?", (user_id,))
+    return cursor.fetchall()
 
-# ------------------------
-# УТИЛИТЫ
-# ------------------------
-def escape_md(text: str) -> str:
-    if not text:
-        return ""
-    escape_chars = r"\_*[]()~`>#+-=|{}.!-"
-    return re.sub(f"([{re.escape(escape_chars)}])", r"\\\1", text)
-
-def make_welcome_keyboard():
-    buttons = [
-        [InlineKeyboardButton("🛒 Каталог товаров", callback_data="home")],
-        [InlineKeyboardButton("🤖 Интерактивный помощник", callback_data="assistant")],
-        [InlineKeyboardButton("🛍 Корзина", callback_data="cart")],
-        [InlineKeyboardButton("📞 Связь с оператором", callback_data="operator")],
-    ]
-    return InlineKeyboardMarkup(buttons)
-
-# ------------------------
-# HANDLERS
-# ------------------------
+# --------------------------
+# START / ПРИВЕТСТВИЕ
+# --------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Приветствие с фото и пояснением кнопок"""
-    welcome_text = (
-        "👋 Добро пожаловать в Scentori!\n\n"
-        "Мы помогаем подобрать ароматы и собрать уникальные композиции под ваше настроение.\n\n"
-        "Ниже — кнопки для навигации:"
+    user_id = update.effective_user.id
+    images_folder = "images"
+    welcome_photo = os.path.join(images_folder, "welcome.jpg")
+    keyboard = [
+        [InlineKeyboardButton("Каталог", callback_data="catalog")],
+        [InlineKeyboardButton("Корзина", callback_data="cart")],
+        [InlineKeyboardButton("Прошлые заказы", callback_data="orders")],
+        [InlineKeyboardButton("Интерактивный помощник", callback_data="helper")]
+    ]
+    caption = (
+        "Добро пожаловать в Scentori! 🕯️\n\n"
+        "Интерактивный помощник поможет вам выбрать аромат или собрать персональную композицию под ваше настроение. "
+        "Корзина показывает текущие товары и бонусы, которые вы накопили."
     )
+    if os.path.exists(welcome_photo):
+        await update.message.reply_photo(open(welcome_photo, "rb"), caption=caption, reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await update.message.reply_text(caption, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    photo_path = "images/welcome.jpg"
-    try:
-        with open(photo_path, "rb") as photo_file:
-            await update.message.reply_photo(
-                photo=InputFile(photo_file),
-                caption=welcome_text,
-                parse_mode="MarkdownV2"
-            )
-    except FileNotFoundError:
-        await update.message.reply_text(
-            welcome_text,
-            parse_mode="MarkdownV2"
-        )
-
-    description_text = (
-        "🛒 *Каталог товаров* — выберите аромат и изучите ассортимент.\n"
-        "🤖 *Интерактивный помощник* — круглосуточная помощь для поиска идеального аромата.\n"
-        "🛍 *Корзина* — здесь собираются ваши выбранные товары перед оформлением заказа.\n"
-        "📞 *Связь с оператором* — для консультации и отправки заказа через Яндекс.Доставку или самовывоз."
-    )
-
-    await update.message.reply_text(
-        description_text,
-        reply_markup=make_welcome_keyboard(),
-        parse_mode="MarkdownV2"
-    )
-
-async def go_home(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query:
-        await query.answer()
-        await start(update, context)
-
-async def open_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    category_key = query.data.split(":")[1]
-    section = CATALOG.get(category_key)
-    if not section:
-        await query.edit_message_text("Категория не найдена.")
-        return
-
-    available_products = []
-    for item_path in section["items"]:
-        product = get_product(item_path)
-        if product and product_available(product["id"]):
-            available_products.append(product)
-
-    available_products.sort(key=lambda p: p["name"])
-
-    keyboard = [[InlineKeyboardButton(p["name"], callback_data=f"prod:{p['id']}:{category_key}")]
-                for p in available_products]
-    keyboard.append([InlineKeyboardButton("На главную", callback_data="home")])
-
-    if not available_products:
-        await query.edit_message_text(
-            "В этой категории пока нет доступных товаров.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return
-
-    await query.edit_message_text(
-        escape_md(section["title"]),
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="MarkdownV2"
-    )
-
+# --------------------------
+# ОТКРЫТИЕ КАРТОЧКИ ТОВАРА
+# --------------------------
 async def open_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    module_path = query.data.split(":")[1]
+    product = get_product(module_path)
+    context.user_data["current_product"] = module_path
 
-    parts = query.data.split(":")
-    product_id = parts[1]
-    category_key = parts[2] if len(parts) > 2 else None
-
-    product = None
-    for p in PRODUCT_CACHE.values():
-        if p["id"] == product_id:
-            product = p
-            break
-
-    if not product:
-        await query.edit_message_text("Товар не найден.")
-        return
-
-    text = (
+    text_main = (
         f"*{escape_md(product['name'])}*\n\n"
-        f"{escape_md(product.get('properties', ''))}\n\n"
-        f"*Применение:*\n{escape_md(product.get('usage', ''))}\n\n"
-        f"*Безопасность:*\n{escape_md(product.get('safety', ''))}\n\n"
-        f"*Характеристики:*\n{escape_md(product.get('tech', ''))}\n\n"
-        f"Цена: {product.get('price_bot', '—')} ₽\n\n"
-        "_Если вы хотите более глубоко исследовать ароматы, "
-        "мы сделали интерактивного помощника, который работает для вас круглосуточно. "
-        "Для доступа выберите кнопку 'Интерактивный помощник' в главном меню._"
+        f"{escape_md(product['properties'][:200])}...\n\n"
+        f"💡 Бонус: 1% от суммы заказа начисляется на ваш бонусный счёт.\n\n"
+        f"_Если хотите изучить глубже, для вас работает интерактивный помощник 24/7. "
+        f"Он поможет выбрать аромат или сделать персональную композицию ароматов под ваш запрос. "
+        f"Для перехода в интерактивный бот перейдите в главное меню и выберите «интерактивный помощник». "
+        f"Также доступна запись к ароматерапевту через связь с оператором._"
+    )
+    keyboard_main = [
+        [InlineKeyboardButton("Свойства", callback_data="prod_prop")],
+        [InlineKeyboardButton("Применение", callback_data="prod_usage")],
+        [InlineKeyboardButton("Добавить в корзину", callback_data=f"add:{module_path}")],
+        [InlineKeyboardButton("На главную", callback_data="start")]
+    ]
+    photo_path = get_fallback_photo(product["photo"])
+    await query.edit_message_media(
+        media=InputMediaPhoto(open(photo_path, "rb"), caption=text_main, parse_mode="Markdown"),
+        reply_markup=InlineKeyboardMarkup(keyboard_main)
     )
 
-    keyboard = []
-    if category_key:
-        keyboard.append([InlineKeyboardButton("Назад", callback_data=f"cat:{category_key}")])
-    keyboard.append([InlineKeyboardButton("На главную", callback_data="home")])
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    image_path = product.get("photo")
-    if image_path:
-        try:
-            with open(image_path, "rb") as f:
-                await query.edit_message_media(
-                    media=InputMediaPhoto(media=f, caption=text, parse_mode="MarkdownV2"),
-                    reply_markup=reply_markup
-                )
-        except Exception as e:
-            print(f"Ошибка отображения фото: {e}")
-            await query.edit_message_text(
-                text,
-                reply_markup=reply_markup,
-                parse_mode="MarkdownV2"
-            )
-    else:
-        await query.edit_message_text(
-            text,
-            reply_markup=reply_markup,
-            parse_mode="MarkdownV2"
-        )
-
-async def assistant(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def product_step_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(
-        "🤖 Интерактивный помощник готов помогать вам в подборе ароматов.\n"
-        "Выберите категорию или товар для рекомендаций.",
-        reply_markup=make_welcome_keyboard()
-    )
+    module_path = context.user_data.get("current_product")
+    if not module_path:
+        await query.edit_message_text("Ошибка: продукт не найден. Вернитесь в главное меню.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("На главную", callback_data="start")]]))
+        return
+    product = get_product(module_path)
+    step_map = {
+        "prod_prop": ("Свойства", product["properties"]),
+        "prod_usage": ("Применение", product["usage"]),
+        "prod_safety": ("Безопасность", product["safety"]),
+        "prod_tech": ("Характеристики", product["tech"])
+    }
+    step = query.data
+    if step not in step_map:
+        return
+    title, text_content = step_map[step]
+    text = f"*{title}*\n\n{escape_md(text_content)}\n\n" \
+           f"_Если хотите изучить глубже, для вас работает интерактивный помощник 24/7. " \
+           f"Он поможет выбрать аромат или сделать персональную композицию ароматов под ваш запрос. " \
+           f"Для перехода в интерактивный бот перейдите в главное меню и выберите «интерактивный помощник». " \
+           f"Также доступна запись к ароматерапевту через связь с оператором._"
+    keyboard = [
+        [InlineKeyboardButton("Следующий блок", callback_data={
+            "Свойства": "prod_usage",
+            "Применение": "prod_safety",
+            "Безопасность": "prod_tech",
+            "Характеристики": "prod_prop"
+        }[title])],
+        [InlineKeyboardButton("Назад", callback_data="prod_main")],
+        [InlineKeyboardButton("На главную", callback_data="start")],
+        [InlineKeyboardButton("Добавить в корзину", callback_data=f"add:{module_path}")]
+    ]
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def product_main_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await open_product(update, context)
+
+# --------------------------
+# Callback добавления в корзину
+# --------------------------
+async def add_to_cart_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(
-        "🛍 Ваша корзина пока пуста.\n"
-        "Вы можете добавлять товары из каталога.",
-        reply_markup=make_welcome_keyboard()
-    )
+    module_path = query.data.split(":")[1]
+    product = get_product(module_path)
+    add_to_cart(query.from_user.id, product["id"])
+    await query.edit_message_caption(query.message.caption + "\n\n✅ Товар добавлен в корзину!", reply_markup=query.message.reply_markup)
 
-async def operator(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text(
-        "📞 Чтобы оформить заказ или уточнить детали, свяжитесь с оператором.\n"
-        "Мы используем Яндекс.Доставку или самовывоз с двух адресов.",
-        reply_markup=make_welcome_keyboard()
-    )
-
-# ------------------------
-# MAIN
-# ------------------------
-def main():
-    load_warehouse()
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(load_warehouse, "interval", hours=12)
-    scheduler.start()
-
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-
+# --------------------------
+# Регистрация handler'ов
+# --------------------------
+def register_handlers(app):
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(go_home, pattern="^home$"))
-    app.add_handler(CallbackQueryHandler(open_category, pattern="^cat:"))
-    app.add_handler(CallbackQueryHandler(open_product, pattern="^prod:"))
-    app.add_handler(CallbackQueryHandler(assistant, pattern="^assistant$"))
-    app.add_handler(CallbackQueryHandler(cart, pattern="^cart$"))
-    app.add_handler(CallbackQueryHandler(operator, pattern="^operator$"))
+    app.add_handler(CallbackQueryHandler(open_product, pattern=r"^product:"))
+    app.add_handler(CallbackQueryHandler(product_step_callback, pattern=r"^prod_"))
+    app.add_handler(CallbackQueryHandler(product_main_callback, pattern=r"^prod_main$"))
+    app.add_handler(CallbackQueryHandler(add_to_cart_callback, pattern=r"^add:"))
 
-    app.run_polling()
+# --------------------------
+# Scheduler обновления склада
+# --------------------------
+def update_warehouse():
+    # Здесь можно добавить код загрузки файла с Google Drive или другого источника
+    pass
 
+scheduler = BackgroundScheduler()
+scheduler.add_job(update_warehouse, "interval", hours=12)
+scheduler.start()
+
+# --------------------------
+# Запуск бота
+# --------------------------
 if __name__ == "__main__":
-    main()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    register_handlers(app)
+    app.run_polling()
