@@ -6,6 +6,7 @@ import io
 import requests
 import time
 import threading
+import aiosqlite
 from flask import Flask
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
@@ -179,6 +180,20 @@ def update_warehouse():
         logging.info(f"✅ Склад: {len(warehouse_cache)} товаров")
     except Exception as e:
         logging.error(f"❌ Склад: {e}")
+
+# -------------------------- база --------------------------
+async def save_customer_action(user_id, action):
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        async with aiosqlite.connect("customers.db") as db:
+            await db.execute(
+                "INSERT INTO customers (user_id, timestamp, action) VALUES (?, ?, ?)",
+                (user_id, timestamp, action)
+            )
+            await db.commit()
+        print(f"✅ {user_id} → {action}")
+    except:
+       pass
 
 # -------------------------- ОПЕРАТОР --------------------------
 async def send_operator_notification(context, user_id: int, request_type: str, details: str = ""):
@@ -497,3 +512,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
