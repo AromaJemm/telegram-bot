@@ -228,7 +228,7 @@ scheduler.start()
 # --------------------------
 # Запуск бота
 # --------------------------
-if name == "__main__":
+if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     register_handlers(app)
 
@@ -251,3 +251,4 @@ if name == "__main__":
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
     app.run_polling()
+
