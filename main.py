@@ -7,6 +7,7 @@ import requests
 import time
 import threading
 import aiosqlite
+import asyncio
 from flask import Flask
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
@@ -526,6 +527,7 @@ async def main():
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
+
 
 
