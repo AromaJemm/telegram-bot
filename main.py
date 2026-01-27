@@ -510,41 +510,31 @@ def ping():
 async def main():
     await init_db()    
         
-    # ====================== TELEGRAM BOT (НОВОЕ!) ======================
-    global application
+    # ====================== TELEGRAM BOT ======================
+def main():
+    # Создаём бота ОДИН раз
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     
-    # ✅ Handlers для команд и кнопок
+    # Добавляем handlers ОДИН раз
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(handle_catalog, pattern="^(cat|product|prop|use|safety|tech|add|main|cart):"))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_error_handler(error_handler)
     
-    # ✅ ФИКС 3: Сначала функции, потом scheduler
+    # Запускаем scheduler в фоне
     scheduler = BackgroundScheduler()
     scheduler.add_job(update_warehouse, 'cron', hour='6,14')
     scheduler.start()
     
-    # ✅ ФИКС 6: Правильный Flask для Render
-    if os.environ.get('RENDER'):
-        flask_thread = threading.Thread(
-            target=lambda: app_flask.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)), debug=False), 
-            daemon=True
-        )
-        flask_thread.start()
-        threading.Thread(target=ping_thread, daemon=True).start()
-    
-    # Первое обновление склада
+    # ✅ Первое обновление склада
     update_warehouse()
-    application.run_polling()
     
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_error_handler(error_handler)
-    app.run_polling(drop_pending_updates=True)
+    # ✅ Запускаем ТОЛЬКО Telegram bot
+    application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    (main())
+    main()  # Без лишних скобок
+
 
 
 
