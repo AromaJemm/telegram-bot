@@ -461,17 +461,17 @@ async def handle_catalog(query, context, user_id):
             await query.answer("❌ Нет на складе!")
         return
 
-# 5. МЕНЮ "main" и "cart" 
-if data == "main":
-    await query.edit_message_text("🏠 *Главное меню:*", parse_mode="Markdown", reply_markup=main_menu())
-    return
-if data == "cart":
-    await query.edit_message_text("🛒 *Корзина:*", parse_mode="Markdown", reply_markup=cart_menu())
-    return
+    # 5. МЕНЮ "main" и "cart" 
+    if data == "main":  # ← 4 ПРОБЕЛА!
+        await query.edit_message_text("🏠 *Главное меню:*", parse_mode="Markdown", reply_markup=main_menu())
+        return
+    if data == "cart":  # ← 4 ПРОБЕЛА!
+        await query.edit_message_text("🛒 *Корзина:*", parse_mode="Markdown", reply_markup=cart_menu())
+        return
 
-# 6. ГЛАВНАЯ СТРАНИЦА КАТАЛОГА (по умолчанию)
-save_customer_action(user_id, "catalog_view")
-await query.edit_message_text("🛒 *Каталог:*", parse_mode="Markdown", reply_markup=catalog_menu())
+    # 6. ГЛАВНАЯ СТРАНИЦА КАТАЛОГА (по умолчанию)
+        save_customer_action(user_id, "catalog_view")  # ← 4 ПРОБЕЛА!
+        await query.edit_message_text("🛒 *Каталог:*", parse_mode="Markdown", reply_markup=catalog_menu())  
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -545,6 +545,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
