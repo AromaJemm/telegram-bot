@@ -23,7 +23,7 @@ app_flask = Flask(__name__)
 
 # -------------------------- ПЕРЕМЕННЫЕ --------------------------
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-WAREHOUSE_FILE_LINK = os.environ["WAREHOUSE_FILE_LINK"]
+WAREHOUSE_FILE_LINK = os.getenv("WAREHOUSE_FILE_LINK")
 DATA_CUST_LINK = os.environ.get("DATA_CUST_LINK", "")
 OPERATOR_ID = int(os.environ["OPERATOR_ID"])
 DB_FILE = "orders.db"
@@ -171,14 +171,11 @@ def register_new_customer(user_id: int):
 def update_warehouse():
     global warehouse_cache
     try:
-        # ✅ ИСПРАВЛЕННЫЙ блок (ЗАМЕНИТЬ существующий):
-        url = WAREHOUSE_FILE_LINK.replace('/view?', '/export?format=xlsx&gid=0').replace('/edit?', '/export?format=xlsx&gid=0')
+        url = f"{WAREHOUSE_FILE_LINK}&export=download"  # ← Google Sheets
         response = requests.get(url, timeout=30)
-        response.raise_for_status()  # ← ДОБАВЬ ЭТУ СТРОКУ
+        response.raise_for_status()
         
         df = pd.read_excel(io.BytesIO(response.content), engine='openpyxl')
-        
-        # ✅ ВСЁ ОСТАЛЬНОЕ ОСТАВЬ КАК ЕСТЬ:
         warehouse_cache.clear()
         for _, row in df.iterrows():
             pid = str(row['product_id']).strip()
@@ -554,4 +551,5 @@ async def main():
 if __name__ == "__main__":
     import asyncio
     asyncio.run(main())
+
 
