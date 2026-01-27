@@ -452,14 +452,14 @@ async def handle_catalog(query, context, user_id):
         return
     
     # 4. ДОБАВИТЬ В КОРЗИНУ
-if data.startswith("add:"):
-    module_path = data.split(":", 1)[1]
-    product = get_product_safe(module_path)
-    if add_to_cart(user_id, product['id']):
-     await query.answer("✅ Добавлено в корзину!")
-    else:
-        await query.answer("❌ Нет на складе!")
-    return
+    if data.startswith("add:"):
+        module_path = data.split(":", 1)[1]
+        product = get_product_safe(module_path)
+        if add_to_cart(user_id, product['id']):
+            await query.answer("✅ Добавлено в корзину!")
+        else:
+            await query.answer("❌ Нет на складе!")
+        return
 
 # 5. МЕНЮ "main" и "cart" 
 if data == "main":
@@ -545,6 +545,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
