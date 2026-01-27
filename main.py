@@ -170,7 +170,7 @@ def register_new_customer(user_id: int):
 def update_warehouse():
     global warehouse_cache
     try:
-        url = WAREHOUSE_FILE_LINK.replace('/view?', '/export?format=xlsx').replace('/edit?', '/export?format=xlsx')
+        url = WAREHOUSE_FILE_LINK.replace('/view?', '/export?format=xlsx&gid=0').replace('/edit?', '/export?format=xlsx&gid=0')
         df = pd.read_excel(io.BytesIO(requests.get(url, timeout=30).content), engine='openpyxl')
         warehouse_cache.clear()
         for _, row in df.iterrows():
@@ -534,6 +534,7 @@ def main():
 
 if __name__ == "__main__":
     main()  # Без лишних скобок
+
 
 
 
