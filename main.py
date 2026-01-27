@@ -171,7 +171,7 @@ def update_warehouse():
     global warehouse_cache
     try:
         url = WAREHOUSE_FILE_LINK.replace('/view?', '/export?format=xlsx').replace('/edit?', '/export?format=xlsx')
-        df = pd.read_excel(io.BytesIO(requests.get(url, timeout=30).content))
+        df = pd.read_excel(io.BytesIO(requests.get(url, timeout=30).content), engine='openpyxl')
         warehouse_cache.clear()
         for _, row in df.iterrows():
             pid = str(row['product_id']).strip()
@@ -534,7 +534,7 @@ async def main():
     
     # Первое обновление склада
     update_warehouse()
-    await application.run_polling()
+    application.run_polling()
     
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
@@ -544,7 +544,8 @@ async def main():
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    (main())
+
 
 
 
