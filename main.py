@@ -16,6 +16,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from html import escape as escape_md
 import logging
 import traceback
+PORT = int(os.environ.get('PORT', 10000))
 
 logging.basicConfig(level=logging.INFO)
 app_flask = Flask(__name__)
@@ -507,11 +508,15 @@ def ping():
     return "🤖 Bot OK"
 
 # -------------------------- ЗАПУСК (✅ ФИКС 5) --------------------------
+import os
+PORT = int(os.environ.get('PORT', 10000))  # ← ДОБАВЬ в начало файла
+
 async def main():
-    await init_db()    
-        
+    await init_db()  # ← Твоя БД работает!
+    
     # ====================== TELEGRAM BOT ======================
-def main():
+    global application
+    
     # Создаём бота ОДИН раз
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     
@@ -529,20 +534,17 @@ def main():
     # ✅ Первое обновление склада
     update_warehouse()
     
-    # ✅ Запускаем ТОЛЬКО Telegram bot
-    application.run_polling(drop_pending_updates=True)
+    # ✅ WEBHOOK для Render
+    webhook_url = f"https://{os.environ['RENDER_EXTERNAL_HOSTNAME']}/{BOT_TOKEN}"
+    await application.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
+    
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=BOT_TOKEN,
+        webhook_url=webhook_url
+    )
 
 if __name__ == "__main__":
-    main()  # Без лишних скобок
-
-
-
-
-
-
-
-
-
-
-
-
+    import asyncio
+    asyncio.run(main())
