@@ -456,7 +456,7 @@ if data.startswith("add:"):
     module_path = data.split(":", 1)[1]
     product = get_product_safe(module_path)
     if add_to_cart(user_id, product['id']):
-        await query.answer("✅ Добавлено в корзину!")
+     await query.answer("✅ Добавлено в корзину!")
     else:
         await query.answer("❌ Нет на складе!")
     return
@@ -545,6 +545,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
 
 
