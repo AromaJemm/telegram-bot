@@ -171,8 +171,14 @@ def register_new_customer(user_id: int):
 def update_warehouse():
     global warehouse_cache
     try:
+        # ✅ ИСПРАВЛЕННЫЙ блок (ЗАМЕНИТЬ существующий):
         url = WAREHOUSE_FILE_LINK.replace('/view?', '/export?format=xlsx&gid=0').replace('/edit?', '/export?format=xlsx&gid=0')
-        df = pd.read_excel(io.BytesIO(requests.get(url, timeout=30).content), engine='openpyxl')
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()  # ← ДОБАВЬ ЭТУ СТРОКУ
+        
+        df = pd.read_excel(io.BytesIO(response.content), engine='openpyxl')
+        
+        # ✅ ВСЁ ОСТАЛЬНОЕ ОСТАВЬ КАК ЕСТЬ:
         warehouse_cache.clear()
         for _, row in df.iterrows():
             pid = str(row['product_id']).strip()
@@ -548,3 +554,4 @@ async def main():
 if __name__ == "__main__":
     import asyncio
     asyncio.run(main())
+
